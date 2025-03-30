@@ -7,29 +7,55 @@ import aiohttp
 import os
 from typing import Optional
 import shutil
+from urllib.parse import urlparse, urlunparse
 
 app = FastAPI(title="FFProbe API")
 
 class URLInput(BaseModel):
     url: HttpUrl
 
+def normalize_url(url: str) -> str:
+    """Normalize URL by removing double slashes in the path."""
+    parsed = urlparse(str(url))
+    # Reconstruct the URL with normalized path
+    return urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path.replace('//', '/'),
+        parsed.params,
+        parsed.query,
+        parsed.fragment
+    ))
+
 async def download_file(url: str) -> str:
     # Create a temporary file
     temp_file = tempfile.NamedTemporaryFile(delete=False)
     temp_filename = temp_file.name
     
+    # Normalize the URL
+    normalized_url = normalize_url(url)
+    
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise HTTPException(status_code=400, detail="Could not download file")
-            
-            # Stream the file to disk
-            with open(temp_filename, 'wb') as f:
-                while True:
-                    chunk = await response.content.read(8192)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+        try:
+            async with session.get(normalized_url) as response:
+                if response.status != 200:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Could not download file. Status code: {response.status}"
+                    )
+                
+                # Stream the file to disk
+                with open(temp_filename, 'wb') as f:
+                    while True:
+                        chunk = await response.content.read(8192)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+        except aiohttp.ClientError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to download file: {str(e)}"
+            )
     
     return temp_filename
 
